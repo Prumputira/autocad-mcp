@@ -1,0 +1,23 @@
+AutoCAD MCP Server
+Copyright 2026 Nordiska Brand AB
+
+This product is licensed under the Apache License 2.0 (the "License").
+
+This product includes software derived from the following open-source projects:
+
+  - puran-water/autocad-mcp (MIT License)
+    https://github.com/puran-water/autocad-mcp
+    Copyright (c) 2024 AutoCAD MCP Server Contributors
+    Dual backend architecture, File IPC protocol, AutoLISP dispatcher,
+    execute_lisp, P&ID support, screenshot system.
+
+  - ngk0/autocad-mcp (MIT License)
+    https://github.com/ngk0/autocad-mcp
+    Copyright (c) 2024 AutoCAD MCP Server Contributors
+    Extended tool categories (xref, layout, electrical, validation,
+    query, search, geometry, export), test suite.
+
+  - AnCode666/multiCAD-mcp (Apache License 2.0)
+    https://github.com/AnCode666/multiCAD-mcp
+    COM backend for multi-CAD support, batch operations,
+    NLP command processor, Excel export.
