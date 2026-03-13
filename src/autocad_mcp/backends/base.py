@@ -770,6 +770,9 @@ class AutoCADBackend(ABC):
     async def magicad_list_commands(self) -> CommandResult:
         return CommandResult(ok=False, error="Not supported on this backend")
 
+    async def magicad_project_info(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
     # --- COM / Connection Management ---
 
     async def connect(self, cad_type: str = "autocad") -> CommandResult:

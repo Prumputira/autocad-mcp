@@ -664,6 +664,7 @@
     ((= cmd-name "magicad-clear-garbage") (mcp-cmd-magicad-clear-garbage))
     ((= cmd-name "magicad-disconnect-project") (mcp-cmd-magicad-disconnect-project))
     ((= cmd-name "magicad-list-commands") (mcp-cmd-magicad-list-commands))
+    ((= cmd-name "magicad-project-info") (mcp-cmd-magicad-project-info))
 
     ;; --- Unknown ---
     (t (cons nil (strcat "Unknown command: " cmd-name)))
@@ -5697,6 +5698,136 @@
     (setq result (strcat result "\"" c "\"")))
   (setq result (strcat result "]"))
   (cons T (strcat "{\"count\":" (itoa (length found)) ",\"commands\":" result "}")))
+
+;; Helper: read all string/int/real data from a dictionary entity (recursive, max 3 levels)
+(defun mcp-magicad-read-dict-entry (dict-ent depth / edata etype result
+                                     first child-name child-ent ds np idx p)
+  (if (> depth 3)
+    "{}"
+    (progn
+      (setq edata (vl-catch-all-apply 'entget (list dict-ent)))
+      (if (or (not edata) (vl-catch-all-error-p edata))
+        "{}"
+        (progn
+          (setq etype (cdr (assoc 0 edata)))
+          (setq result (strcat "{\"type\":\""
+                               (mcp-escape-string (if etype etype "?"))
+                               "\""))
+          ;; Collect all string values (group codes 1, 300, 301, 302)
+          (foreach p edata
+            (if (and (member (car p) '(1 300 301 302))
+                     (= (type (cdr p)) 'STR))
+              (setq result (strcat result
+                ",\"val_" (itoa (car p)) "\":\""
+                (mcp-escape-string (cdr p)) "\""))))
+          ;; Collect numeric values for XRECORD entities
+          (if (= etype "XRECORD")
+            (foreach p edata
+              (cond
+                ((and (= (car p) 40) (= (type (cdr p)) 'REAL))
+                 (setq result (strcat result ",\"real_40\":" (rtos (cdr p) 2 6))))
+                ((and (= (car p) 70) (= (type (cdr p)) 'INT))
+                 (setq result (strcat result ",\"int_70\":" (itoa (cdr p)))))
+                ((and (= (car p) 90) (= (type (cdr p)) 'INT))
+                 (setq result (strcat result ",\"int_90\":" (itoa (cdr p))))))))
+          ;; If DICTIONARY, recurse into named children
+          (if (= etype "DICTIONARY")
+            (progn
+              (setq result (strcat result ",\"children\":{"))
+              (setq first T)
+              (setq idx 0)
+              (while (< idx (length edata))
+                (setq p (nth idx edata))
+                (if (and (= (car p) 3) (= (type (cdr p)) 'STR))
+                  (progn
+                    (setq child-name (cdr p))
+                    (setq child-ent nil)
+                    ;; Try next entry as group 350
+                    (if (< (1+ idx) (length edata))
+                      (progn
+                        (setq np (nth (1+ idx) edata))
+                        (if (and (= (car np) 350) (= (type (cdr np)) 'ENAME))
+                          (setq child-ent (cdr np)))))
+                    ;; Fallback: dictsearch
+                    (if (not child-ent)
+                      (progn
+                        (setq ds (vl-catch-all-apply 'dictsearch (list dict-ent child-name)))
+                        (if (and ds (not (vl-catch-all-error-p ds)))
+                          (setq child-ent (cdr (assoc -1 ds))))))
+                    (if child-ent
+                      (progn
+                        (if first
+                          (setq first nil)
+                          (setq result (strcat result ",")))
+                        (setq result (strcat result
+                          "\"" (mcp-escape-string child-name) "\":"
+                          (mcp-magicad-read-dict-entry child-ent (1+ depth))))))))
+                (setq idx (1+ idx)))
+              (setq result (strcat result "}"))))
+          (strcat result "}"))))))
+
+
+(defun mcp-cmd-magicad-project-info (/ nod result edata dict-names first
+                                       entry dict-ent ldata-project
+                                       magi-layers lyr lname val)
+  "Read MagiCAD project information from the drawing's named object dictionary."
+  (setq result "{")
+
+  ;; --- Drawing context ---
+  (setq result (strcat result
+    "\"dwgname\":\"" (mcp-escape-string (getvar "DWGNAME")) "\""
+    ",\"dwgprefix\":\"" (mcp-escape-string (getvar "DWGPREFIX")) "\""))
+
+  ;; --- Named Object Dictionary: find all MAGI* entries and recurse ---
+  (setq nod (namedobjdict))
+  (setq edata (entget nod))
+  (setq dict-names '())
+  (foreach pair edata
+    (if (and (= (car pair) 3)
+             (vl-string-search "magi" (strcase (cdr pair) T)))
+      (setq dict-names (cons (cdr pair) dict-names))))
+
+  (setq result (strcat result ",\"nod_entries\":{"))
+  (setq first T)
+  (foreach dname (reverse dict-names)
+    (if first (setq first nil) (setq result (strcat result ",")))
+    ;; Get the dictionary entity for this name
+    (setq entry (dictsearch nod dname))
+    (if entry
+      (progn
+        (setq dict-ent (cdr (assoc -1 entry)))
+        (setq result (strcat result "\"" (mcp-escape-string dname) "\":"
+          (mcp-magicad-read-dict-entry dict-ent 0))))
+      (setq result (strcat result "\"" (mcp-escape-string dname) "\":null"))))
+  (setq result (strcat result "}"))
+
+  ;; --- vlax-ldata: check for MagiCAD application data ---
+  (setq ldata-project
+    (vl-catch-all-apply
+      (function (lambda ()
+        (vlax-ldata-get "MagiCAD" "ProjectPath")))))
+  (if (and ldata-project (not (vl-catch-all-error-p ldata-project)))
+    (setq result (strcat result ",\"ldata_project_path\":\"" (mcp-escape-string (vl-princ-to-string ldata-project)) "\""))
+    (setq result (strcat result ",\"ldata_project_path\":null")))
+
+  ;; --- MAGI layers ---
+  (setq magi-layers '())
+  (setq lyr (tblnext "LAYER" T))
+  (while lyr
+    (setq lname (cdr (assoc 2 lyr)))
+    (if (vl-string-search "MAGI" (strcase lname))
+      (setq magi-layers (cons lname magi-layers)))
+    (setq lyr (tblnext "LAYER")))
+  (setq result (strcat result ",\"magi_layers\":["))
+  (setq first T)
+  (foreach ml (reverse magi-layers)
+    (if first (setq first nil) (setq result (strcat result ",")))
+    (setq result (strcat result "\"" (mcp-escape-string ml) "\"")))
+  (setq result (strcat result "]"))
+
+  (setq result (strcat result "}"))
+  (cons T result)
+)
 
 ;; -----------------------------------------------------------------------
 ;; Startup message

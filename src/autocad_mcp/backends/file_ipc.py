@@ -977,6 +977,25 @@ class FileIPCBackend(AutoCADBackend):
     async def magicad_list_commands(self) -> CommandResult:
         return await self._dispatch("magicad-list-commands", {}, timeout=30)
 
+    async def magicad_project_info(self) -> CommandResult:
+        result = await self._dispatch("magicad-project-info", {})
+        if not result.ok or not result.payload:
+            return result
+        # Enrich with file-system search for .qpd/.epj project files
+        import pathlib
+        data = result.payload if isinstance(result.payload, dict) else {}
+        dwgprefix = data.get("dwgprefix", "")
+        if dwgprefix:
+            p = pathlib.Path(dwgprefix)
+            project_files: list[str] = []
+            for _ in range(5):  # walk up 5 levels
+                for ext in ("*.qpd", "*.epj", "*.mep", "*.mrd"):
+                    project_files.extend(str(f) for f in p.glob(ext))
+                p = p.parent
+            if project_files:
+                data["project_files"] = project_files
+        return CommandResult(ok=True, payload=data)
+
     # --- View ---
 
     async def zoom_extents(self) -> CommandResult:

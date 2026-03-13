@@ -1536,6 +1536,7 @@ async def magicad(
       show_all           — Unisolate/show all MagiCAD objects.
       clear_garbage      — Clear MagiCAD garbage layer.
       disconnect_project — Disconnect drawing from MagiCAD project.
+      project_info       — Read MagiCAD project info from drawing (NOD, ldata, layers).
     """
     data = data or {}
     backend = await get_backend()
@@ -1572,6 +1573,8 @@ async def magicad(
         result = await backend.magicad_clear_garbage()
     elif operation == "disconnect_project":
         result = await backend.magicad_disconnect_project()
+    elif operation == "project_info":
+        result = await backend.magicad_project_info()
     else:
         return _json({"error": f"Unknown magicad operation: {operation}"})
 
