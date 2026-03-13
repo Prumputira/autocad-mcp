@@ -133,9 +133,29 @@ class FileIPCBackend(AutoCADBackend):
     # --- IPC dispatch ---
 
     async def _dispatch(self, command: str, params: dict, timeout: float | None = None) -> CommandResult:
-        """Send a command via file IPC and wait for result."""
+        """Send a command via file IPC and wait for result.
+
+        On timeout, auto-reinitializes (re-detects AutoCAD window) and retries once.
+        This handles AutoCAD restarts where the window handle becomes stale.
+        """
         async with self._lock:
-            return await self._dispatch_unlocked(command, params, timeout=timeout)
+            result = await self._dispatch_unlocked(command, params, timeout=timeout)
+            if not result.ok and result.error and "Timeout" in result.error:
+                old_hwnd = self._hwnd
+                new_hwnd = find_autocad_window()
+                if new_hwnd and new_hwnd != old_hwnd:
+                    log.info("auto_reinit", old_hwnd=old_hwnd, new_hwnd=new_hwnd)
+                    self._hwnd = new_hwnd
+                    self._command_hwnd = self._find_command_line_hwnd()
+                    if self._screenshot_provider:
+                        try:
+                            from autocad_mcp.screenshot import Win32ScreenshotProvider
+                            self._screenshot_provider = Win32ScreenshotProvider(self._hwnd)
+                        except Exception:
+                            pass
+                    self._cleanup_stale_files()
+                    result = await self._dispatch_unlocked(command, params, timeout=timeout)
+            return result
 
     async def _dispatch_unlocked(self, command: str, params: dict, timeout: float | None = None) -> CommandResult:
         """Core IPC logic (must be called under _lock)."""
@@ -906,6 +926,56 @@ class FileIPCBackend(AutoCADBackend):
 
     async def electrical_wire_number_assign(self, layer, prefix="W", start_num=1) -> CommandResult:
         return await self._dispatch("electrical-wire-number-assign", {"layer": layer, "prefix": prefix, "start_num": start_num})
+
+    # --- MagiCAD ---
+
+    async def magicad_status(self) -> CommandResult:
+        return await self._dispatch("magicad-status", {})
+
+    async def magicad_run(self, command: str, args: str | None = None) -> CommandResult:
+        params = {"command": command}
+        if args:
+            params["args"] = args
+        return await self._dispatch("magicad-run", params, timeout=30)
+
+    async def magicad_update_drawing(self, flags: str | None = None) -> CommandResult:
+        params = {}
+        if flags:
+            params["flags"] = flags
+        return await self._dispatch("magicad-update-drawing", params, timeout=60)
+
+    async def magicad_cleanup(self, options: str | None = None) -> CommandResult:
+        params = {}
+        if options:
+            params["options"] = options
+        return await self._dispatch("magicad-cleanup", params, timeout=60)
+
+    async def magicad_ifc_export(self, mode: str = "current") -> CommandResult:
+        return await self._dispatch("magicad-ifc-export", {"mode": mode}, timeout=120)
+
+    async def magicad_view_mode(self, mode: str, type: str = "D") -> CommandResult:
+        return await self._dispatch("magicad-view-mode", {"mode": mode, "type": type})
+
+    async def magicad_change_storey(self, storey: str) -> CommandResult:
+        return await self._dispatch("magicad-change-storey", {"storey": storey})
+
+    async def magicad_section_update(self) -> CommandResult:
+        return await self._dispatch("magicad-section-update", {}, timeout=60)
+
+    async def magicad_fix_errors(self) -> CommandResult:
+        return await self._dispatch("magicad-fix-errors", {}, timeout=30)
+
+    async def magicad_show_all(self) -> CommandResult:
+        return await self._dispatch("magicad-show-all", {})
+
+    async def magicad_clear_garbage(self) -> CommandResult:
+        return await self._dispatch("magicad-clear-garbage", {})
+
+    async def magicad_disconnect_project(self) -> CommandResult:
+        return await self._dispatch("magicad-disconnect-project", {})
+
+    async def magicad_list_commands(self) -> CommandResult:
+        return await self._dispatch("magicad-list-commands", {}, timeout=30)
 
     # --- View ---
 

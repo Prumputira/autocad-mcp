@@ -650,6 +650,21 @@
     ((= cmd-name "place-equipment-tag") (mcp-cmd-place-equipment-tag params-json))
     ((= cmd-name "batch-find-and-tag") (mcp-cmd-batch-find-and-tag params-json))
 
+    ;; --- MagiCAD ---
+    ((= cmd-name "magicad-status") (mcp-cmd-magicad-status))
+    ((= cmd-name "magicad-run") (mcp-cmd-magicad-run params-json))
+    ((= cmd-name "magicad-update-drawing") (mcp-cmd-magicad-update-drawing params-json))
+    ((= cmd-name "magicad-cleanup") (mcp-cmd-magicad-cleanup params-json))
+    ((= cmd-name "magicad-ifc-export") (mcp-cmd-magicad-ifc-export params-json))
+    ((= cmd-name "magicad-view-mode") (mcp-cmd-magicad-view-mode params-json))
+    ((= cmd-name "magicad-change-storey") (mcp-cmd-magicad-change-storey params-json))
+    ((= cmd-name "magicad-section-update") (mcp-cmd-magicad-section-update))
+    ((= cmd-name "magicad-fix-errors") (mcp-cmd-magicad-fix-errors))
+    ((= cmd-name "magicad-show-all") (mcp-cmd-magicad-show-all))
+    ((= cmd-name "magicad-clear-garbage") (mcp-cmd-magicad-clear-garbage))
+    ((= cmd-name "magicad-disconnect-project") (mcp-cmd-magicad-disconnect-project))
+    ((= cmd-name "magicad-list-commands") (mcp-cmd-magicad-list-commands))
+
     ;; --- Unknown ---
     (t (cons nil (strcat "Unknown command: " cmd-name)))
   )
@@ -5509,10 +5524,185 @@
 )
 
 ;; -----------------------------------------------------------------------
+;; MagiCAD integration commands
+;; -----------------------------------------------------------------------
+
+(defun mcp-cmd-magicad-status (/ arxlist magi-modules result)
+  "Check if MagiCAD is loaded and list modules."
+  (setq arxlist (arx))
+  (setq magi-modules
+    (vl-remove-if-not
+      '(lambda (x) (vl-string-search "magi" (strcase x T)))
+      arxlist))
+  (if magi-modules
+    (progn
+      (setq result "{\"loaded\":true,\"modules\":[")
+      (setq first T)
+      (foreach m magi-modules
+        (if first (setq first nil) (setq result (strcat result ",")))
+        (setq result (strcat result "\"" (mcp-escape-string m) "\"")))
+      (setq result (strcat result "]}"))
+      (cons T result))
+    (cons T "{\"loaded\":false,\"modules\":[]}")))
+
+(defun mcp-cmd-magicad-run (params-json / cmd-str args arg-list ok)
+  "Run a MagiCAD command with optional arguments."
+  (setq cmd-str (mcp-json-get-string params-json "command"))
+  (if (not cmd-str)
+    (cons nil "Missing 'command' parameter")
+    (progn
+      ;; Verify it's a MagiCAD command (must start with MAGI or -MAGI or _MAGI)
+      (setq cmd-upper (strcase cmd-str))
+      (if (not (or (vl-string-search "MAGI" cmd-upper)
+                   (vl-string-search "MEUPS" cmd-upper)
+                   (vl-string-search "MEVPO" cmd-upper)
+                   (vl-string-search "MESF" cmd-upper)
+                   (vl-string-search "MEDPRJ" cmd-upper)
+                   (vl-string-search "MRCAS" cmd-upper)
+                   (vl-string-search "MRCSOD" cmd-upper)
+                   (vl-string-search "MRCSOB" cmd-upper)))
+        (cons nil "Only MagiCAD commands are allowed (must contain MAGI, MEUPS, MEVPO, MESF, MEDPRJ, or MRC)")
+        (progn
+          ;; Get optional arguments as a list of strings
+          (setq args (mcp-json-get-string params-json "args"))
+          (if args
+            (progn
+              (setq arg-list (mcp-string-split args " "))
+              ;; Build command call with arguments
+              (setq ok (apply 'vl-cmdf (cons cmd-str arg-list))))
+            (setq ok (vl-cmdf cmd-str)))
+          (if ok
+            (cons T (strcat "{\"command\":\"" (mcp-escape-string cmd-str) "\",\"status\":\"executed\"}"))
+            (cons nil (strcat "Command '" cmd-str "' failed or was cancelled"))))))))
+
+(defun mcp-cmd-magicad-update-drawing (params-json / flags flag-str)
+  "Run -MAGIUPD4 with 16 update flags (all 1 by default)."
+  (setq flags (mcp-json-get-string params-json "flags"))
+  (if (not flags) (setq flags "1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"))
+  (setq flag-list (mcp-string-split flags " "))
+  (if (apply 'vl-cmdf (cons "-MAGIUPD4" flag-list))
+    (cons T "{\"status\":\"drawing_updated\"}")
+    (cons nil "MAGIUPD4 failed")))
+
+(defun mcp-cmd-magicad-cleanup (params-json / opts)
+  "Run -MAGIUCLEAN drawing cleanup."
+  (setq opts (mcp-json-get-string params-json "options"))
+  (if (not opts) (setq opts "Y Y Y Y 8"))
+  (setq opt-list (mcp-string-split opts " "))
+  (if (apply 'vl-cmdf (cons "-MAGIUCLEAN" opt-list))
+    (cons T "{\"status\":\"cleanup_done\"}")
+    (cons nil "MAGIUCLEAN failed")))
+
+(defun mcp-cmd-magicad-ifc-export (params-json / mode)
+  "Run MagiCAD IFC export."
+  (setq mode (mcp-json-get-string params-json "mode"))
+  (if (or (not mode) (= mode "current"))
+    (progn
+      (if (vl-cmdf "-MAGIIFCEXPORTCURDWG")
+        (cons T "{\"status\":\"ifc_exported\",\"mode\":\"current_drawing\"}")
+        (cons nil "IFC export failed")))
+    (progn
+      (if (vl-cmdf "-MAGIIFCEXPORT2")
+        (cons T "{\"status\":\"ifc_exported\",\"mode\":\"selection\"}")
+        (cons nil "IFC export failed")))))
+
+(defun mcp-cmd-magicad-view-mode (params-json / mode pipe-mode)
+  "Change pipe/duct view mode: 1D, 2D, 2D_2D, 2D_3D, 3D."
+  (setq mode (mcp-json-get-string params-json "mode"))
+  (if (not mode)
+    (cons nil "Missing 'mode' parameter (1D, 2D, 2D_2D, 2D_3D, 3D)")
+    (progn
+      (setq pipe-mode (mcp-json-get-string params-json "type"))
+      (if (not pipe-mode) (setq pipe-mode "D"))  ;; D=duct+pipe
+      (if (vl-cmdf "MAGICHANGEVIEWMODE" "On" pipe-mode mode)
+        (cons T (strcat "{\"status\":\"view_mode_changed\",\"mode\":\"" (mcp-escape-string mode) "\"}"))
+        (cons nil "MAGICHANGEVIEWMODE failed")))))
+
+(defun mcp-cmd-magicad-change-storey (params-json / storey)
+  "Change active storey."
+  (setq storey (mcp-json-get-string params-json "storey"))
+  (if (not storey)
+    (cons nil "Missing 'storey' parameter")
+    (if (vl-cmdf "-MAGICAS" storey)
+      (cons T (strcat "{\"status\":\"storey_changed\",\"storey\":\"" (mcp-escape-string storey) "\"}"))
+      (cons nil "MAGICAS failed"))))
+
+(defun mcp-cmd-magicad-section-update (/)
+  "Update all drawing sections."
+  (if (vl-cmdf "-MAGISU")
+    (cons T "{\"status\":\"sections_updated\"}")
+    (cons nil "MAGISU failed")))
+
+(defun mcp-cmd-magicad-fix-errors (/)
+  "Fix ductwork/pipe errors."
+  (if (vl-cmdf "MAGICHK")
+    (cons T "{\"status\":\"errors_checked\"}")
+    (cons nil "MAGICHK failed")))
+
+(defun mcp-cmd-magicad-show-all (/)
+  "Unisolate/show all MagiCAD objects."
+  (if (vl-cmdf "_MAGIUCL")
+    (cons T "{\"status\":\"all_shown\"}")
+    (cons nil "MAGIUCL failed")))
+
+(defun mcp-cmd-magicad-clear-garbage (/)
+  "Clear MagiCAD garbage layer."
+  (if (vl-cmdf "MAGIEMP")
+    (cons T "{\"status\":\"garbage_cleared\"}")
+    (cons nil "MAGIEMP failed")))
+
+(defun mcp-cmd-magicad-disconnect-project (/)
+  "Disconnect drawing from MagiCAD project."
+  (if (vl-cmdf "MAGIDPRJ")
+    (cons T "{\"status\":\"project_disconnected\"}")
+    (cons nil "MAGIDPRJ failed")))
+
+(defun mcp-cmd-magicad-list-commands (/ test-cmds found result first)
+  "List available MagiCAD commands in current session."
+  (setq test-cmds '(
+    ;; Common
+    "-MAGIUCLEAN" "-MAGIUCLEAN2" "MAGIEMP" "-MAGIIFCEXPORT2" "-MAGIIFCEXPORTCURDWG" "-MAGIIFCCD"
+    ;; HPV / Piping
+    "-MAGIUPD" "-MAGIUPD2" "-MAGIUPD3" "-MAGIUPD4" "MAGIEXPLODESCRIPT" "MAGICHANGEVIEWMODE"
+    "MAGICHVM" "-MAGIVPO" "-MAGISU" "MAGICHK" "-MAGICAS" "-MAGICSO" "MAGIDPRJ" "_MAGIUCL"
+    ;; HPV extended
+    "MAGIHPVPIPE" "MAGIHPVDRAW" "MAGIHPVROUTE" "MAGIHPVINSERT" "MAGIHPVSIZE"
+    "MAGIHPVCALC" "MAGIHPVINDEX" "MAGIHPVCHECK" "MAGIHPVBALANCE" "MAGIHPVREPORT"
+    "MAGIHPVPRODUCT" "MAGIHPVEDIT" "MAGIHPVINFO" "MAGIHPVCONNECT" "MAGIHPVSETTINGS"
+    "MAGIHPVSCHEMATIC" "MAGIHPVUPDATE" "MAGIHPVSECTIONUPDATE" "MAGIHPVFIXERRORS"
+    "MAGIHPVUCLEAN" "MAGIHPVEXPLODE" "MAGIHPVIFCEXPORT" "MAGIHPVSHOWALL"
+    "MAGIHPVCHANGESTOREY" "MAGIHPVSTOREYORIGIN" "MAGIHPVDISCONNECT" "MAGIHPVVIEWMODE"
+    "MAGIHPVVIEWPORT"
+    ;; Sprinkler
+    "MAGISPRINKLER" "MAGIHPVSPRINKLER" "MAGIHPVSPRINKLERHEAD" "MAGIHPVSPRINKLERCALC"
+    "MAGIHPVSPRINKLERCHECK" "MAGIHPVSPRINKLERREPORT" "MAGISPRINKLERCALC"
+    "MAGISPRINKLERHEAD" "MAGISPRINKLERCHECK" "MAGISPRINKLERREPORT"
+    "MAGISPRINKLERDRAW" "MAGISPRINKLERROUTE" "MAGISPRINKLERINSERT" "MAGISPRINKLERSIZE"
+    "MAGISPRINKLERINDEX" "MAGISPRINKLEREDIT" "MAGISPRINKLERINFO"
+    "MAGISPRINKLERCONNECT" "MAGISPRINKLERSETTINGS" "MAGISPRINKLERSCHEMATIC"
+    "MAGISPRINKLERBALANCE" "MAGISPRINKLERPRODUCT" "MAGISPRINKLERPIPE"
+    ;; Electrical
+    "MEUPS3" "MAGIESECTIONUPDATE" "MAGIEVPORTOPTIONSSCRIPT" "MEVPOS"
+    "MAGIESHOWFLOOR" "MESF" "MAGIESHOWALL" "MEDPRJ"
+    ;; Room
+    "-MRCAS" "-MRCSOD" "-MRCSOB"
+  ))
+  (setq found '())
+  (foreach c test-cmds
+    (if (vl-cmdf c) (setq found (cons c found))))
+  (setq result "[")
+  (setq first T)
+  (foreach c (reverse found)
+    (if first (setq first nil) (setq result (strcat result ",")))
+    (setq result (strcat result "\"" c "\"")))
+  (setq result (strcat result "]"))
+  (cons T (strcat "{\"count\":" (itoa (length found)) ",\"commands\":" result "}")))
+
+;; -----------------------------------------------------------------------
 ;; Startup message
 ;; -----------------------------------------------------------------------
 
-(princ "\n=== MCP Dispatch v4.0 loaded ===")
+(princ "\n=== MCP Dispatch v5.0 loaded ===")
 (princ "\nIPC directory: ")
 (princ *mcp-ipc-dir*)
 (princ "\nReady for commands via (c:mcp-dispatch)")

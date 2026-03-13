@@ -1,8 +1,8 @@
-"""AutoCAD MCP Server v5.0 — 22 tools with multi-CAD connection, batch ops, NLP, and Excel export.
+"""AutoCAD MCP Server v5.1 — 23 tools with multi-CAD connection, batch ops, NLP, Excel export, and MagiCAD.
 
 Tools: drawing, entity, layer, block, annotation, pid, view, system, query, search, geometry,
        select, modify, validate, export, xref, layout, electrical, connection, batch, nlp,
-       excel_export
+       excel_export, magicad
 """
 
 from __future__ import annotations
@@ -1501,6 +1501,81 @@ async def excel_export(
         return _json({"error": f"Unknown excel_export operation: {operation}"})
 
     return _json(result.to_dict())
+
+
+# ==========================================================================
+# 23. magicad — MagiCAD MEP design integration
+# ==========================================================================
+
+
+@mcp.tool(annotations={"title": "MagiCAD MEP Operations", "readOnlyHint": False})
+@_safe("magicad")
+async def magicad(
+    operation: str,
+    data: dict | None = None,
+    include_screenshot: bool = False,
+) -> ToolResult:
+    """MagiCAD MEP design plugin integration (piping, sprinkler, ventilation).
+
+    Operations:
+      status             — Check if MagiCAD is loaded and list modules.
+      list_commands      — Discover all available MagiCAD commands in current session.
+      run                — Run any MagiCAD command. data: {command, args?}
+                           command: MagiCAD command name (e.g. "MAGISPRINKLERCALC")
+                           args: space-separated arguments (e.g. "On D 3D")
+      update_drawing     — Update drawing data (symbols, indexes, variables).
+                           data: {flags?} — 16 space-separated 0/1 flags, default all 1.
+      cleanup            — Drawing cleanup (purge, audit, fix errors).
+                           data: {options?} — default "Y Y Y Y 8"
+      ifc_export         — Export to IFC. data: {mode?} — "current" (default) or "selection"
+      view_mode          — Change pipe/duct view mode.
+                           data: {mode, type?} — mode: "1D"|"2D"|"2D_2D"|"2D_3D"|"3D", type: "D" (default)
+      change_storey      — Change active storey. data: {storey}
+      section_update     — Update all drawing sections.
+      fix_errors         — Fix ductwork/pipe network errors.
+      show_all           — Unisolate/show all MagiCAD objects.
+      clear_garbage      — Clear MagiCAD garbage layer.
+      disconnect_project — Disconnect drawing from MagiCAD project.
+    """
+    data = data or {}
+    backend = await get_backend()
+
+    if operation == "status":
+        result = await backend.magicad_status()
+    elif operation == "list_commands":
+        result = await backend.magicad_list_commands()
+    elif operation == "run":
+        result = await backend.magicad_run(
+            data.get("command", ""),
+            data.get("args"),
+        )
+    elif operation == "update_drawing":
+        result = await backend.magicad_update_drawing(data.get("flags"))
+    elif operation == "cleanup":
+        result = await backend.magicad_cleanup(data.get("options"))
+    elif operation == "ifc_export":
+        result = await backend.magicad_ifc_export(data.get("mode", "current"))
+    elif operation == "view_mode":
+        result = await backend.magicad_view_mode(
+            data.get("mode", "3D"),
+            data.get("type", "D"),
+        )
+    elif operation == "change_storey":
+        result = await backend.magicad_change_storey(data.get("storey", ""))
+    elif operation == "section_update":
+        result = await backend.magicad_section_update()
+    elif operation == "fix_errors":
+        result = await backend.magicad_fix_errors()
+    elif operation == "show_all":
+        result = await backend.magicad_show_all()
+    elif operation == "clear_garbage":
+        result = await backend.magicad_clear_garbage()
+    elif operation == "disconnect_project":
+        result = await backend.magicad_disconnect_project()
+    else:
+        return _json({"error": f"Unknown magicad operation: {operation}"})
+
+    return await add_screenshot_if_available(result, include_screenshot)
 
 
 # ==========================================================================

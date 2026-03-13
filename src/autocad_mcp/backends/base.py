@@ -729,6 +729,47 @@ class AutoCADBackend(ABC):
         """Auto-assign wire numbers following convention."""
         return CommandResult(ok=False, error="Not supported on this backend")
 
+    # --- MagiCAD ---
+
+    async def magicad_status(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_run(self, command: str, args: str | None = None) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_update_drawing(self, flags: str | None = None) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_cleanup(self, options: str | None = None) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_ifc_export(self, mode: str = "current") -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_view_mode(self, mode: str, type: str = "D") -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_change_storey(self, storey: str) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_section_update(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_fix_errors(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_show_all(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_clear_garbage(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_disconnect_project(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
+    async def magicad_list_commands(self) -> CommandResult:
+        return CommandResult(ok=False, error="Not supported on this backend")
+
     # --- COM / Connection Management ---
 
     async def connect(self, cad_type: str = "autocad") -> CommandResult:
